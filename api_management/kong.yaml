@@ -1,0 +1,188 @@
+# Persistent Volume
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-pv-{{pg_port}}
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data/postgres-pv-{{pg_port}}
+
+
+---
+# Persistent Volume Claim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc-{{pg_port}}
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  volumeName: postgres-pv-{{pg_port}}
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-kong-{{pg_port}}
+spec:
+  selector:
+    matchLabels:
+      app: postgres-container
+  template:
+    metadata:
+      labels:
+        app: postgres-container
+    spec:
+      containers:
+        - name: postgres-container
+          image: postgres:9.6
+          env:
+            - name: POSTGRES_USER
+              value: "kong"
+
+            - name: POSTGRES_DB
+              value: "kong"
+
+            - name: POSTGRES_PASSWORD
+              value: "kong"
+
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: postgres-volume-mount
+      volumes:
+        - name: postgres-volume-mount
+          persistentVolumeClaim:
+            claimName: postgres-pvc-{{pg_port}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-kong-{{pg_port}}
+spec:
+  selector:
+    app: postgres-container
+  ports:
+    - port: {{pg_port}}
+      protocol: TCP
+      targetPort: 5432
+  type: LoadBalancer
+---
+# Migration Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kong-migrations-{{pg_port}}
+#  namespace: {{ .namespace }}
+spec:
+  template:
+    metadata:
+      name: kong-migrations-{{pg_port}}
+#      namespace: {{ .namespace }}
+    spec:
+      containers:
+      - name: kong-migrations-{{pg_port}}
+        image: kong
+        env:
+        - name: KONG_DATABASE
+          value: postgres
+        - name: KONG_PG_HOST
+          value: postgres-kong-{{pg_port}}
+        - name: KONG_PG_USER
+          value: kong
+        - name: KONG_PG_PASSWORD
+          value: kong
+        - name: KONG_CASSANDRA_CONTACT_POINTS
+          value: postgres-kong-{{pg_port}}
+        - name: KONG_PG_PORT
+          value: "{{pg_port}}"
+        command: [ "/bin/sh", "-c", "kong migrations bootstrap", "--vv" ]
+      restartPolicy: Never
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong-deployment-{{pg_port}}
+  labels:
+    app: kong
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kong
+  template:
+    metadata:
+      labels:
+        app: kong
+    spec:
+      containers:
+      - name: kong
+        image: kong
+        ports:
+            - containerPort: 8000
+            - containerPort: 8443
+            - containerPort: 8001
+            - containerPort: 8444
+        env:
+            - name: KONG_DATABASE
+              value: "postgres"
+            - name: KONG_PG_HOST
+              value: "postgres-kong-{{pg_port}}"
+            - name: KONG_PG_PASSWORD
+              value: "kong"
+            - name: KONG_CASSANDRA_CONTACT_POINTS
+              value: "postgres-kong-{{pg_port}}"
+            - name: KONG_PROXY_ACCESS_LOG
+              value: "/dev/stdout"
+            - name: KONG_ADMIN_ACCESS_LOG
+              value: "/dev/stdout"
+            - name: KONG_PROXY_ERROR_LOG
+              value: "/dev/stderr"
+            - name: KONG_ADMIN_ERROR_LOG
+              value: "/dev/stderr"
+            - name: KONG_ADMIN_LISTEN
+              value: "0.0.0.0:8001, 0.0.0.0:8444 ssl"
+            - name: KONG_PG_PORT
+              value: "{{pg_port}}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong-service-{{pg_port}}
+spec:
+  type: LoadBalancer
+  selector:
+    app: kong
+  ports:
+  - name: port1
+    protocol: TCP
+    port: {{port1}}
+    targetPort: 8000
+  - name: port2
+    protocol: TCP
+    port: {{port2}}
+    targetPort: 8443
+  - name: port3
+    protocol: TCP
+    port: {{port3}}
+    targetPort: 8001
+  - name: port4
+    protocol: TCP
+    port: {{port4}}
+    targetPort: 8444
+ 
